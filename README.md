@@ -1,13 +1,34 @@
 # BTC Pattern Lab
 
-Live Binance BTC/USDT spot candlestick chart and experimental breakout setup monitor.
+Live Binance BTC/USDT spot chart, transparent pattern rules, and a browser-local paper trading simulator.
 
 ## Run
-Serve this repository using any static HTTP server, e.g. `python3 -m http.server 8000`, then visit http://localhost:8000.
+`npm start` serves port 10000, or the value of `PORT`. No dependencies or API keys are required. See RENDER.md for Docker deployment settings.
 
-No API keys, build step or dependencies. Internet access to Binance public REST and WebSocket endpoints is required. Some regions may restrict Binance.
+## Observe and test
+1. Select a timeframe (1m offers a quicker test).
+2. Choose 1, 3, 5 or 10 new candle closes and press **Start observing**.
+3. The app analyses up to 120 completed candles, showing trend, the prior 20-bar range, and a breakout or EMA pullback when detected.
+4. After the observation period, a qualifying pattern opens one demo position if automatic demo is checked. Otherwise use **Open confirmed demo**. No qualifying pattern means no trade.
+5. **Open practice now** opens a manual long/short at the observed live price to test simulator controls. It does not represent a pattern signal.
 
-## Strategy
-Selected timeframe, completed candles only: EMA20/EMA50 alignment, close beyond the previous 20-candle high/low, volume at least 1.2x prior 20-candle average. Stop distance is 1.5x 14-bar simple average true range; targets are 1.5R and 2R. Signals expire after one candle. Browser-local journal and optional sound operate only while the page is open.
+### Defined rules
+- Breakout: close above the previous 20-bar high (long) or below the previous 20-bar low (short).
+- Pullback: the previous candle touches EMA20 and closes back on the trend side; the current completed candle closes beyond the previous high/low.
+- Both need price/EMA20/EMA50 trend alignment and volume >= 1.2x the previous 20-bar average.
+- Pattern calculations use completed candles only. A candidate expires after one selected-timeframe candle.
+- Observation counts new closed candles seen after starting. A missing interval resets the count. Changing timeframe stops observation.
 
-This strategy has not been backtested or validated. No automated trading, guaranteed returns, outcome tracking or win-rate claims. Spot prices are not futures mark prices. Position sizing excludes fees, slippage and funding.
+### Demo execution and accounting
+Starts at 1,000 virtual USDT. One position at a time. Entry is the observed live Binance trade price, not a historical candle close. Stop distance is 1.5 times the 14-bar simple mean true range. Target 1 is informational at 1.5R; the entire position exits at Target 2 (2R) or stop. Actual exit uses the first observed trade price crossing a boundary, including overshoot.
+
+Sizing includes estimated entry and stop-exit fees (0.05% each side), with notional capped at the virtual balance. No leverage or funding. Short trades are hypothetical spot-price directional simulations, not a futures execution model. Risk input is capped at 5%.
+
+Realized balance equals initial balance plus all closed net results; equity includes open estimated net P/L after both fees. Pattern summary excludes practice trades and trades with monitoring gaps. History retains the latest 200 closes.
+
+Keep the page open. State persists in this browser, but no background server monitors trades. Reloads, disconnects, missing trade IDs and stale execution data flag open trades as uncertain: automatic exits are suspended and manual close is required. The app does not invent outcomes for missed prices. Observation and automatic mode are not resumed on reload. Reset clears the virtual account.
+
+## Validation
+`node engine.test.cjs` and `node paper.test.cjs` test pattern direction/volume gating, fee-adjusted risk, notional caps, observation counting, practice open/close, monitoring gaps and timeframe changes.
+
+Experimental rules have not been backtested or proven profitable. Public Binance access may be restricted in some regions. No real orders are sent.
