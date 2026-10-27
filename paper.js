@@ -5,6 +5,8 @@ paper.used=paper.used||[];
 if(paper.position)paper.position.gap=true;
 let watching=false,seen=0,watchTF=interval,baseline=null,observation=null,marketPrice=0,marketAt=0,tradeSocket,tradeReconnect,lastTradeId=0;
 const freshPrice=()=>marketPrice>0&&Date.now()-marketAt<10000;
+const freshChart=()=>lastTick>0&&Date.now()-lastTick<15000;
+const entryNear=()=>!!observation&&freshPrice()&&Math.abs(marketPrice-observation.close)<=observation.atr*.35;
 function persistPaper(){try{localStorage.setItem('btc-paper-v1',JSON.stringify(paper))}catch{$('paperNote').textContent='Browser storage unavailable. Keep this page open; results will not persist.'}}
 function gap(){if(paper.position&&!paper.position.gap){paper.position.gap=true;persistPaper()}renderPaper()}
 function scan(){
@@ -16,26 +18,34 @@ function scan(){
   $('patternRead').textContent=observation.pattern+(observation.qualified?' · entry rules confirmed':' · entry rules not confirmed');
   $('sampleRead').textContent=bars.slice(-120).length+' completed '+interval+' candles';
   $('c2').textContent=observation.trigger?'✓':'○';
+  $('c4').textContent=observation.rsiOk?'✓':'○';$('c5').textContent=observation.macdOk?'✓':'○';
+  $('rsiValue').textContent=observation.rsi.toFixed(1);
+  $('rsiStatus').textContent=observation.side?(observation.rsiOk?'Within '+observation.side+' range':'Outside '+observation.side+' range'):'No trend direction';
+  $('macdValue').textContent=observation.macd.line.toFixed(2)+' / '+observation.macd.signal.toFixed(2);
+  $('macdStatus').textContent=observation.macdOk?'Agrees with trend':'Does not confirm trend';
+  $('volumeRatio').textContent=observation.volumeRatio.toFixed(2)+'×';$('atrValue').textContent=fmt(observation.atr)+' USDT';
+  const missing=[];if(!observation.trend)missing.push('EMA trend');if(!observation.trigger)missing.push('pattern');if(!observation.volume)missing.push('volume');if(!observation.rsiOk)missing.push('RSI');if(!observation.macdOk)missing.push('MACD');
+  $('filterReason').textContent=missing.length?'Waiting for: '+missing.join(', ')+'.':'All candle filters passed. '+(freshChart()&&entryNear()?'Live entry is within 0.35 ATR.':'Waiting for a fresh chart and an entry within 0.35 ATR of signal close.');
   if(watching&&watchTF!==interval){watching=false;seen=0;baseline=null;$('watchState').textContent='Timeframe changed. Start a new observation.';}
   if(watching){
     if(baseline===null)baseline=observation.t;
     else if(observation.t>baseline){seen=observation.t-baseline===ms()?seen+1:0;baseline=observation.t;}
     const need=+$('watchBars').value;
     $('watchState').textContent=seen<need?`Observing ${seen} / ${need} new closed candles · ${interval}`:'Observation complete · waiting for a qualified pattern';
-    if(seen>=need&&observation.qualified&&Date.now()-observation.T<ms()&&freshPrice()&&$('autoPaper').checked&&!paper.position){openPaper(false);}
+    if(seen>=need&&observation.qualified&&Date.now()-observation.T<ms()&&freshChart()&&entryNear()&&$('autoPaper').checked&&!paper.position){openPaper(false);}
   }
   $('watchStart').textContent=watching?'Stop observing':'Start observing';
-  $('openSetup').disabled=!(observation.qualified&&freshPrice()&&seen>=+$('watchBars').value&&watching&&!paper.position&&Date.now()-observation.T<ms());
+  $('openSetup').disabled=!(observation.qualified&&freshChart()&&entryNear()&&seen>=+$('watchBars').value&&watching&&!paper.position&&Date.now()-observation.T<ms());
   $('testPaper').disabled=!freshPrice()||!!paper.position||!(observation.atr>0);
 }
 function openPaper(practice){
   if(paper.position||!freshPrice()||!observation)return;
-  if(!practice&&(!watching||seen<+$('watchBars').value||!observation.qualified||Date.now()-observation.T>=ms()))return;
+  if(!practice&&(!watching||seen<+$('watchBars').value||!observation.qualified||Date.now()-observation.T>=ms()||!freshChart()||!entryNear()))return;
   const key=interval+':'+observation.t;
   if(!practice&&paper.used.includes(key)){$('paperNote').textContent='This signal has already been tested.';return;}
   const t=E.open({side:practice?$('practiceSide').value:observation.side,entry:marketPrice,atr:observation.atr,balance:paper.balance,risk:+$('paperRisk').value});
   if(!t){$('paperNote').textContent='Enter a risk between 0.1% and 5%, with sufficient demo balance.';return;}
-  paper.position={...t,opened:Date.now(),interval,pattern:practice?'Manual practice — not a signal':observation.pattern,practice,gap:false,tp1Hit:false};
+  paper.position={...t,opened:Date.now(),interval,pattern:practice?'Manual practice — not a signal':observation.pattern,strategyVersion:2,practice,gap:false,tp1Hit:false};
   if(!practice){paper.used.push(key);paper.used=paper.used.slice(-500)}
   $('paperNote').textContent=practice?'Practice trade opened at live price. This tests the simulator, not pattern performance.':'Pattern trade opened at the observed live price after the observation period.';
   persistPaper();renderPaper();scan();
@@ -57,8 +67,8 @@ function renderPaper(){
   $('p_qty').textContent=t?t.qty.toFixed(6)+' BTC':'—';
   $('p_pnl').textContent=t&&freshPrice()?fmt(E.result(t,marketPrice).net)+' USDT (after estimated fees)':'—';
   $('tp1Status').textContent=t?(t.tp1Hit?'Touched · informational only':'Waiting · full exit at Target 2'):'—';
-  const tested=paper.history.filter(x=>!x.practice&&!x.gap);
-  $('demoStats').textContent=`${tested.length} completed pattern trades · ${tested.filter(t=>t.net>0).length} wins · ${fmt(tested.reduce((s,t)=>s+t.net,0))} USDT net. Practice and monitoring-gap trades excluded.`;
+  const tested=paper.history.filter(x=>!x.practice&&!x.gap&&x.strategyVersion===2);
+  $('demoStats').textContent=`${tested.length} completed indicator strategy trades · ${tested.filter(t=>t.net>0).length} wins · ${fmt(tested.reduce((s,t)=>s+t.net,0))} USDT net. Practice, older strategy and monitoring-gap trades excluded.`;
   $('paperHistory').innerHTML=paper.history.length?paper.history.slice(0,20).map(t=>`<tr><td>${new Date(t.closed).toLocaleTimeString()}</td><td>${t.side}<br><span class="small">${t.practice?'Practice':t.pattern}${t.gap?' · gap':''}</span></td><td>${fmt(t.entry)} → ${fmt(t.exit)}</td><td>${t.reason}</td><td style="color:${t.net>=0?'#00dc82':'#f3747f'}">${fmt(t.net)}</td></tr>`).join(''):'<tr><td colspan="5" class="small">Completed demo trades will appear here.</td></tr>';
 }
 function tradeConnect(){
